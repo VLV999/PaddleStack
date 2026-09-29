@@ -21,6 +21,28 @@ type Player = {
   queued_at: string
   court: number | null
   slot: number | null
+  group_id: string | null
+}
+
+type QueueItem =
+  | { type: 'solo'; player: Player }
+  | { type: 'group'; groupId: string; players: Player[] }
+
+function buildQueueItems(queue: Player[]): QueueItem[] {
+  const seen = new Set<string>()
+  const items: QueueItem[] = []
+  for (const p of queue) {
+    if (seen.has(p.id)) continue
+    if (p.group_id) {
+      const members = queue.filter((q) => q.group_id === p.group_id)
+      members.forEach((m) => seen.add(m.id))
+      items.push({ type: 'group', groupId: p.group_id, players: members })
+    } else {
+      seen.add(p.id)
+      items.push({ type: 'solo', player: p })
+    }
+  }
+  return items
 }
 
 export default function AdminSessionPage() {
@@ -35,6 +57,8 @@ export default function AdminSessionPage() {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editName, setEditName] = useState('')
   const [editSkill, setEditSkill] = useState('intermediate')
+  const [groupMode, setGroupMode] = useState(false)
+  const [groupSelection, setGroupSelection] = useState<string[]>([])
 
   useEffect(() => {
     let cancelled = false
@@ -53,7 +77,7 @@ export default function AdminSessionPage() {
       async function loadPlayers() {
         const { data } = await supabase
           .from('players')
-          .select('id, name, skill, status, queued_at, court, slot')
+          .select('id, name, skill, status, queued_at, court, slot, group_id')
           .eq('session_id', id)
           .order('queued_at', { ascending: true })
         if (!cancelled) setPlayers(data ?? [])
@@ -210,6 +234,54 @@ export default function AdminSessionPage() {
     setEditingId(null)
   }
 
+  function toggleGroupMode() {
+    setGroupMode((v) => !v)
+    setGroupSelection([])
+  }
+
+  function toggleGroupPick(playerId: string) {
+    setGroupSelection((sel) =>
+      sel.includes(playerId) ? sel.filter((pid) => pid !== playerId) : sel.length < 4 ? [...sel, playerId] : sel
+    )
+  }
+
+  async function createGroup() {
+    if (groupSelection.length !== 2 && groupSelection.length !== 4) {
+      alert('Select exactly 2 or 4 players to group them.')
+      return
+    }
+    const groupId = crypto.randomUUID()
+    const now = new Date().toISOString()
+    await supabase.from('players').update({ group_id: groupId, queued_at: now }).in('id', groupSelection)
+    setGroupSelection([])
+    setGroupMode(false)
+  }
+
+  async function removeFromGroup(player: Player) {
+    if (!player.group_id) return
+    const remaining = players.filter((p) => p.group_id === player.group_id && p.id !== player.id)
+
+    // Take this one player out, delayed to the back of the queue.
+    await supabase
+      .from('players')
+      .update({ group_id: null, queued_at: new Date().toISOString() })
+      .eq('id', player.id)
+
+    // A "group" of one isn't really a group anymore.
+    if (remaining.length === 1) {
+      await supabase.from('players').update({ group_id: null }).eq('id', remaining[0].id)
+    }
+  }
+
+  async function dissolveGroup(groupId: string) {
+    if (!confirm('Split this group back into individual queue spots?')) return
+    const memberIds = players.filter((p) => p.group_id === groupId).map((p) => p.id)
+    await supabase
+      .from('players')
+      .update({ group_id: null, queued_at: new Date().toISOString() })
+      .in('id', memberIds)
+  }
+
   async function autoAssignAll() {
     if (!session) return
 
@@ -301,6 +373,19 @@ export default function AdminSessionPage() {
 
   const queue = players.filter((p) => p.status === 'queued')
   const onCourtCount = players.filter((p) => p.status === 'playing').length
+
+  const queueItems = buildQueueItems(queue)
+  let posCounter = 1
+  const queueRows = queueItems.map((item) => {
+    if (item.type === 'solo') {
+      const pos = posCounter
+      posCounter += 1
+      return { ...item, pos }
+    }
+    const pos = posCounter
+    posCounter += item.players.length
+    return { ...item, pos, endPos: posCounter - 1 }
+  })
 
   return (
     <main className="min-h-dvh bg-[#f8fafc] pb-20">
@@ -478,9 +563,19 @@ export default function AdminSessionPage() {
           <aside>
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">Queue</h2>
-              <span className="rounded-full bg-[#0f2a3a] px-2.5 py-0.5 text-xs font-semibold text-white">
-                {queue.length}
-              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={toggleGroupMode}
+                  className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
+                    groupMode ? 'bg-[#0f2a3a] text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                  }`}
+                >
+                  {groupMode ? 'Cancel' : 'Group players'}
+                </button>
+                <span className="rounded-full bg-[#0f2a3a] px-2.5 py-0.5 text-xs font-semibold text-white">
+                  {queue.length}
+                </span>
+              </div>
             </div>
 
             <form onSubmit={quickAdd} className="mb-4 flex gap-2">
@@ -504,84 +599,214 @@ export default function AdminSessionPage() {
               </button>
             </form>
 
+            {groupMode && (
+              <div className="mb-2 flex items-center justify-between rounded-lg bg-[#2f6f8f]/10 px-3 py-2 text-xs text-[#2f6f8f]">
+                <span>{groupSelection.length} selected — pick 2 or 4</span>
+                <button
+                  onClick={createGroup}
+                  disabled={groupSelection.length !== 2 && groupSelection.length !== 4}
+                  className="rounded-md bg-[#0f2a3a] px-2 py-1 text-xs font-semibold text-white disabled:opacity-30"
+                >
+                  Link group
+                </button>
+              </div>
+            )}
+
             <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
-              {selected && (
+              {selected && !groupMode && (
                 <p className="mb-2 px-1 text-xs text-slate-500">Tap an open court slot to place this player.</p>
               )}
               {queue.length === 0 ? (
                 <p className="px-1 py-2 text-sm text-slate-400">Nobody waiting.</p>
               ) : (
                 <ol className="space-y-1">
-                  {queue.map((p, i) =>
-                    editingId === p.id ? (
-                      <li key={p.id} className="flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-2">
-                        <input
-                          value={editName}
-                          onChange={(e) => setEditName(e.target.value)}
-                          className="min-w-0 flex-1 rounded-md border border-slate-300 px-2 py-1 text-sm outline-none focus:border-[#2f6f8f]"
-                          autoFocus
-                        />
-                        <select
-                          value={editSkill}
-                          onChange={(e) => setEditSkill(e.target.value)}
-                          className="rounded-md border border-slate-300 px-1 py-1 text-sm outline-none focus:border-[#2f6f8f]"
-                        >
-                          <option value="beginner">Beg</option>
-                          <option value="intermediate">Int</option>
-                          <option value="advanced">Adv</option>
-                        </select>
-                        <button
-                          onClick={() => saveEdit(p.id)}
-                          className="rounded-md bg-[#0f2a3a] px-2 py-1 text-xs font-semibold text-white"
-                        >
-                          Save
-                        </button>
-                        <button
-                          onClick={() => setEditingId(null)}
-                          className="text-xs text-slate-400 hover:text-slate-600"
-                        >
-                          Cancel
-                        </button>
-                      </li>
-                    ) : (
-                      <li
-                        key={p.id}
-                        className={`group flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors ${
-                          selected === p.id ? 'bg-[#d9f24a] font-semibold text-[#0f2a3a]' : 'hover:bg-slate-50'
-                        }`}
-                      >
-                        <span
-                          onClick={() => setSelected(selected === p.id ? null : p.id)}
-                          className={`flex h-5 w-5 flex-none cursor-pointer items-center justify-center rounded-full text-[10px] ${
-                            selected === p.id ? 'bg-[#0f2a3a] text-white' : 'bg-slate-100 text-slate-500'
+                  {queueRows.map((row) => {
+                    if (row.type === 'solo') {
+                      const p = row.player
+                      if (editingId === p.id) {
+                        return (
+                          <li key={p.id} className="flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-2">
+                            <input
+                              value={editName}
+                              onChange={(e) => setEditName(e.target.value)}
+                              className="min-w-0 flex-1 rounded-md border border-slate-300 px-2 py-1 text-sm outline-none focus:border-[#2f6f8f]"
+                              autoFocus
+                            />
+                            <select
+                              value={editSkill}
+                              onChange={(e) => setEditSkill(e.target.value)}
+                              className="rounded-md border border-slate-300 px-1 py-1 text-sm outline-none focus:border-[#2f6f8f]"
+                            >
+                              <option value="beginner">Beg</option>
+                              <option value="intermediate">Int</option>
+                              <option value="advanced">Adv</option>
+                            </select>
+                            <button
+                              onClick={() => saveEdit(p.id)}
+                              className="rounded-md bg-[#0f2a3a] px-2 py-1 text-xs font-semibold text-white"
+                            >
+                              Save
+                            </button>
+                            <button
+                              onClick={() => setEditingId(null)}
+                              className="text-xs text-slate-400 hover:text-slate-600"
+                            >
+                              Cancel
+                            </button>
+                          </li>
+                        )
+                      }
+                      return (
+                        <li
+                          key={p.id}
+                          className={`group flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors ${
+                            selected === p.id ? 'bg-[#d9f24a] font-semibold text-[#0f2a3a]' : 'hover:bg-slate-50'
                           }`}
                         >
-                          {i + 1}
-                        </span>
-                        <span
-                          onClick={() => setSelected(selected === p.id ? null : p.id)}
-                          className="flex-1 cursor-pointer truncate"
-                        >
-                          {p.name}
-                        </span>
-                        <span className={selected === p.id ? 'text-[#0f2a3a]/70' : 'text-slate-400'}>{p.skill}</span>
-                        <button
-                          onClick={() => startEdit(p)}
-                          className="text-xs text-slate-400 opacity-0 hover:text-slate-600 group-hover:opacity-100"
-                          aria-label={`Edit ${p.name}`}
-                        >
-                          ✏️
-                        </button>
-                        <button
-                          onClick={() => removePlayer(p.id, p.name)}
-                          className="text-xs text-slate-400 opacity-0 hover:text-red-600 group-hover:opacity-100"
-                          aria-label={`Remove ${p.name}`}
-                        >
-                          ✕
-                        </button>
+                          {groupMode ? (
+                            <input
+                              type="checkbox"
+                              checked={groupSelection.includes(p.id)}
+                              onChange={() => toggleGroupPick(p.id)}
+                              className="h-4 w-4 flex-none accent-[#0f2a3a]"
+                            />
+                          ) : (
+                            <span
+                              onClick={() => setSelected(selected === p.id ? null : p.id)}
+                              className={`flex h-5 w-5 flex-none cursor-pointer items-center justify-center rounded-full text-[10px] ${
+                                selected === p.id ? 'bg-[#0f2a3a] text-white' : 'bg-slate-100 text-slate-500'
+                              }`}
+                            >
+                              {row.pos}
+                            </span>
+                          )}
+                          <span
+                            onClick={() => !groupMode && setSelected(selected === p.id ? null : p.id)}
+                            className={`flex-1 truncate ${groupMode ? '' : 'cursor-pointer'}`}
+                          >
+                            {p.name}
+                          </span>
+                          <span className={selected === p.id ? 'text-[#0f2a3a]/70' : 'text-slate-400'}>{p.skill}</span>
+                          {!groupMode && (
+                            <>
+                              <button
+                                onClick={() => startEdit(p)}
+                                className="text-xs text-slate-400 opacity-0 hover:text-slate-600 group-hover:opacity-100"
+                                aria-label={`Edit ${p.name}`}
+                              >
+                                ✏️
+                              </button>
+                              <button
+                                onClick={() => removePlayer(p.id, p.name)}
+                                className="text-xs text-slate-400 opacity-0 hover:text-red-600 group-hover:opacity-100"
+                                aria-label={`Remove ${p.name}`}
+                              >
+                                ✕
+                              </button>
+                            </>
+                          )}
+                        </li>
+                      )
+                    }
+
+                    // Grouped cluster
+                    return (
+                      <li
+                        key={row.groupId}
+                        className="rounded-lg border border-[#2f6f8f]/30 bg-[#2f6f8f]/5 p-2"
+                      >
+                        <div className="mb-1 flex items-center justify-between px-1">
+                          <span className="text-[10px] font-semibold uppercase tracking-wide text-[#2f6f8f]">
+                            Group · {row.pos === row.endPos ? `#${row.pos}` : `#${row.pos}–${row.endPos}`}
+                          </span>
+                          {!groupMode && (
+                            <button
+                              onClick={() => dissolveGroup(row.groupId)}
+                              className="text-[10px] font-medium text-slate-400 hover:text-red-600"
+                            >
+                              Ungroup
+                            </button>
+                          )}
+                        </div>
+                        <div className="space-y-1">
+                          {row.players.map((p) =>
+                            editingId === p.id ? (
+                              <div key={p.id} className="flex items-center gap-2 rounded-md bg-white px-2 py-1.5">
+                                <input
+                                  value={editName}
+                                  onChange={(e) => setEditName(e.target.value)}
+                                  className="min-w-0 flex-1 rounded-md border border-slate-300 px-2 py-1 text-sm outline-none focus:border-[#2f6f8f]"
+                                  autoFocus
+                                />
+                                <select
+                                  value={editSkill}
+                                  onChange={(e) => setEditSkill(e.target.value)}
+                                  className="rounded-md border border-slate-300 px-1 py-1 text-sm outline-none focus:border-[#2f6f8f]"
+                                >
+                                  <option value="beginner">Beg</option>
+                                  <option value="intermediate">Int</option>
+                                  <option value="advanced">Adv</option>
+                                </select>
+                                <button
+                                  onClick={() => saveEdit(p.id)}
+                                  className="rounded-md bg-[#0f2a3a] px-2 py-1 text-xs font-semibold text-white"
+                                >
+                                  Save
+                                </button>
+                                <button
+                                  onClick={() => setEditingId(null)}
+                                  className="text-xs text-slate-400 hover:text-slate-600"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            ) : (
+                              <div
+                                key={p.id}
+                                className="group flex items-center gap-2 rounded-md bg-white px-2 py-1.5 text-sm"
+                              >
+                                <span
+                                  onClick={() => setSelected(selected === p.id ? null : p.id)}
+                                  className={`flex-1 truncate ${!groupMode ? 'cursor-pointer' : ''} ${
+                                    selected === p.id ? 'font-semibold text-[#0f2a3a]' : ''
+                                  }`}
+                                >
+                                  {p.name}
+                                </span>
+                                <span className="text-slate-400">{p.skill}</span>
+                                {!groupMode && (
+                                  <>
+                                    <button
+                                      onClick={() => startEdit(p)}
+                                      className="text-xs text-slate-400 opacity-0 hover:text-slate-600 group-hover:opacity-100"
+                                      aria-label={`Edit ${p.name}`}
+                                    >
+                                      ✏️
+                                    </button>
+                                    <button
+                                      onClick={() => removeFromGroup(p)}
+                                      className="text-xs text-slate-400 opacity-0 hover:text-amber-600 group-hover:opacity-100"
+                                      aria-label={`Remove ${p.name} from group`}
+                                      title="Remove from group"
+                                    >
+                                      ↩
+                                    </button>
+                                    <button
+                                      onClick={() => removePlayer(p.id, p.name)}
+                                      className="text-xs text-slate-400 opacity-0 hover:text-red-600 group-hover:opacity-100"
+                                      aria-label={`Remove ${p.name}`}
+                                    >
+                                      ✕
+                                    </button>
+                                  </>
+                                )}
+                              </div>
+                            )
+                          )}
+                        </div>
                       </li>
                     )
-                  )}
+                  })}
                 </ol>
               )}
             </div>
