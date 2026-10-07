@@ -28,6 +28,8 @@ type QueueItem =
   | { type: 'solo'; player: Player }
   | { type: 'group'; groupId: string; players: Player[] }
 
+type Unit = { ids: string[]; players: Player[]; size: number }
+
 function buildQueueItems(queue: Player[]): QueueItem[] {
   const seen = new Set<string>()
   const items: QueueItem[] = []
@@ -45,12 +47,32 @@ function buildQueueItems(queue: Player[]): QueueItem[] {
   return items
 }
 
+function buildUnits(queue: Player[]): Unit[] {
+  const seen = new Set<string>()
+  const units: Unit[] = []
+  for (const p of queue) {
+    if (seen.has(p.id)) continue
+    if (p.group_id) {
+      const members = queue.filter((q) => q.group_id === p.group_id)
+      members.forEach((m) => seen.add(m.id))
+      units.push({ ids: members.map((m) => m.id), players: members, size: members.length })
+    } else {
+      seen.add(p.id)
+      units.push({ ids: [p.id], players: [p], size: 1 })
+    }
+  }
+  return units
+}
+
+const skillValue = (s: string) => (s === 'beginner' ? 0 : s === 'advanced' ? 2 : 1)
+
 export default function AdminSessionPage() {
   const { id } = useParams<{ id: string }>()
   const [session, setSession] = useState<Session | null>(null)
   const [players, setPlayers] = useState<Player[]>([])
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState<string | null>(null)
+  const [selectedGroup, setSelectedGroup] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
   const [quickName, setQuickName] = useState('')
   const [quickSkill, setQuickSkill] = useState('intermediate')
@@ -121,6 +143,26 @@ export default function AdminSessionPage() {
       .eq('id', playerId)
 
     setSelected(null)
+  }
+
+  async function assignGroup(groupId: string, court: number) {
+    const members = players.filter((p) => p.group_id === groupId && p.status === 'queued')
+    if (members.length === 0) return
+
+    const occupied = players.filter((p) => p.status === 'playing' && p.court === court)
+    const openSlots = [0, 1, 2, 3].filter((s) => !occupied.some((o) => o.slot === s))
+
+    if (openSlots.length < members.length) {
+      alert(`This court only has ${openSlots.length} open spot${openSlots.length === 1 ? '' : 's'} — the group needs ${members.length}.`)
+      return
+    }
+
+    await Promise.all(
+      members.map((p, i) =>
+        supabase.from('players').update({ status: 'playing', court, slot: openSlots[i] }).eq('id', p.id)
+      )
+    )
+    setSelectedGroup(null)
   }
 
   async function finishGame(court: number) {
@@ -237,6 +279,8 @@ export default function AdminSessionPage() {
   function toggleGroupMode() {
     setGroupMode((v) => !v)
     setGroupSelection([])
+    setSelectedGroup(null)
+    setSelected(null)
   }
 
   function toggleGroupPick(playerId: string) {
@@ -280,13 +324,18 @@ export default function AdminSessionPage() {
       .from('players')
       .update({ group_id: null, queued_at: new Date().toISOString() })
       .in('id', memberIds)
+    if (selectedGroup === groupId) setSelectedGroup(null)
+  }
+
+  function toggleSelectGroup(groupId: string) {
+    setSelected(null)
+    setSelectedGroup((g) => (g === groupId ? null : groupId))
   }
 
   async function autoAssignAll() {
     if (!session) return
 
-    const skillValue = (s: string) => (s === 'beginner' ? 0 : s === 'advanced' ? 2 : 1)
-    const WINDOW = 8 // how far into the queue we're willing to look, per court
+    const WINDOW_UNITS = 8
 
     // Pull match history so we can penalize repeat groupings.
     const { data: matchRows } = await supabase
@@ -304,21 +353,69 @@ export default function AdminSessionPage() {
       }
     })
 
-    function repeatCount(group: Player[]) {
+    function repeatCount(flat: Player[]) {
       let count = 0
-      for (let i = 0; i < group.length; i++) {
-        for (let j = i + 1; j < group.length; j++) {
-          if (playedTogether.has([group[i].id, group[j].id].sort().join('|'))) count++
+      for (let i = 0; i < flat.length; i++) {
+        for (let j = i + 1; j < flat.length; j++) {
+          if (playedTogether.has([flat[i].id, flat[j].id].sort().join('|'))) count++
         }
       }
       return count
     }
 
-    function scoreGroup(group: Player[], waitIndices: number[]) {
-      const skills = group.map((p) => skillValue(p.skill))
+    function scoreCombo(combo: Unit[], unitIndices: number[]) {
+      const flat = combo.flatMap((u) => u.players)
+      const skills = flat.map((p) => skillValue(p.skill))
       const spread = Math.max(...skills) - Math.min(...skills)
-      const waitPenalty = waitIndices.reduce((a, b) => a + b, 0)
-      return repeatCount(group) * 1000 + spread * 10 + waitPenalty * 0.1
+      const waitPenalty = unitIndices.reduce((a, b) => a + b, 0)
+      return repeatCount(flat) * 1000 + spread * 10 + waitPenalty * 0.1
+    }
+
+    function subsetsSummingToFour(pool: Unit[]): { combo: Unit[]; indices: number[] }[] {
+      const results: { combo: Unit[]; indices: number[] }[] = []
+      const n = pool.length
+      for (let mask = 1; mask < 1 << n; mask++) {
+        let sum = 0
+        const combo: Unit[] = []
+        const indices: number[] = []
+        for (let i = 0; i < n; i++) {
+          if (mask & (1 << i)) {
+            sum += pool[i].size
+            if (sum > 4) break
+            combo.push(pool[i])
+            indices.push(i)
+          }
+        }
+        if (sum === 4) results.push({ combo, indices })
+      }
+      return results
+    }
+
+    function placeCourt(combo: Unit[]): Player[] {
+      const fourUnit = combo.find((u) => u.size === 4)
+      const pairUnits = combo.filter((u) => u.size === 2)
+      const soloUnits = combo.filter((u) => u.size === 1)
+
+      let sideA: Player[]
+      let sideB: Player[]
+
+      if (fourUnit) {
+        const sorted = [...fourUnit.players].sort((a, b) => skillValue(a.skill) - skillValue(b.skill))
+        sideA = [sorted[0], sorted[2]]
+        sideB = [sorted[1], sorted[3]]
+      } else if (pairUnits.length === 2) {
+        sideA = pairUnits[0].players
+        sideB = pairUnits[1].players
+      } else if (pairUnits.length === 1) {
+        sideA = pairUnits[0].players
+        sideB = soloUnits.map((u) => u.players[0])
+      } else {
+        const sorted = soloUnits.map((u) => u.players[0]).sort((a, b) => skillValue(a.skill) - skillValue(b.skill))
+        sideA = [sorted[0], sorted[2]]
+        sideB = [sorted[1], sorted[3]]
+      }
+
+      return [sideA[0], sideA[1], sideB[0], sideB[1]]
     }
 
     // Work on a local copy of the queue so courts fill in order without
@@ -331,37 +428,38 @@ export default function AdminSessionPage() {
 
     for (let c = 0; c < session.court_count; c++) {
       const isEmpty = players.every((p) => !(p.status === 'playing' && p.court === c))
-      if (!isEmpty || workingQueue.length < 4) continue
+      if (!isEmpty) continue
 
-      const pool = workingQueue.slice(0, WINDOW)
-      let best: { group: Player[]; indices: number[]; score: number } | null = null
+      const units = buildUnits(workingQueue)
+      if (units.length === 0) continue
 
-      for (let a = 0; a < pool.length; a++) {
-        for (let b = a + 1; b < pool.length; b++) {
-          for (let c2 = b + 1; c2 < pool.length; c2++) {
-            for (let d = c2 + 1; d < pool.length; d++) {
-              const group = [pool[a], pool[b], pool[c2], pool[d]]
-              const score = scoreGroup(group, [a, b, c2, d])
-              if (!best || score < best.score) best = { group, indices: [a, b, c2, d], score }
-            }
-          }
+      const pool = units.slice(0, WINDOW_UNITS)
+      const allCandidates = subsetsSummingToFour(pool)
+
+      // The person (or group) at the front of the queue must always be
+      // included — we only choose skill-balanced partners around them,
+      // never skip past them for a tighter skill match elsewhere.
+      const candidates = allCandidates.filter((c) => c.indices.includes(0))
+      if (candidates.length === 0) continue
+
+      let best = candidates[0]
+      let bestScore = scoreCombo(best.combo, best.indices)
+      for (const cand of candidates.slice(1)) {
+        const s = scoreCombo(cand.combo, cand.indices)
+        if (s < bestScore) {
+          best = cand
+          bestScore = s
         }
       }
 
-      if (!best) continue
-
-      assignments.push({ court: c, group: best.group })
-      const chosenIds = new Set(best.group.map((p) => p.id))
-      workingQueue = workingQueue.filter((p) => !chosenIds.has(p.id))
+      const flatIds = new Set(best.combo.flatMap((u) => u.ids))
+      assignments.push({ court: c, group: placeCourt(best.combo) })
+      workingQueue = workingQueue.filter((p) => !flatIds.has(p.id))
     }
 
     for (const { court, group } of assignments) {
-      // Sort by skill and interleave, so each side of the net gets one
-      // stronger and one weaker player rather than stacking skill on one side.
-      const sorted = [...group].sort((a, b) => skillValue(a.skill) - skillValue(b.skill))
-      const bySlot = [sorted[0], sorted[2], sorted[1], sorted[3]]
       await Promise.all(
-        bySlot.map((p, slot) =>
+        group.map((p, slot) =>
           supabase.from('players').update({ status: 'playing', court, slot }).eq('id', p.id)
         )
       )
@@ -499,6 +597,11 @@ export default function AdminSessionPage() {
                   .sort((a, b) => (a.slot ?? 0) - (b.slot ?? 0))
                 const filled = onCourt.length
                 const label = filled === 0 ? 'Open' : filled === 4 ? 'In play' : `${filled}/4`
+                const openSlotsCount = 4 - filled
+                const groupNeeds = selectedGroup
+                  ? players.filter((p) => p.group_id === selectedGroup && p.status === 'queued').length
+                  : 0
+                const canPlaceGroupHere = selectedGroup && groupNeeds > 0 && openSlotsCount >= groupNeeds
 
                 return (
                   <div key={c} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -547,10 +650,20 @@ export default function AdminSessionPage() {
                       ))}
                     </div>
 
+                    {selectedGroup && (
+                      <button
+                        onClick={() => assignGroup(selectedGroup, c)}
+                        disabled={!canPlaceGroupHere}
+                        className="mt-2 w-full rounded-xl bg-[#d9f24a] py-2 text-xs font-semibold text-[#0f2a3a] disabled:cursor-not-allowed disabled:opacity-30"
+                      >
+                        Place group here
+                      </button>
+                    )}
+
                     <button
                       onClick={() => finishGame(c)}
                       disabled={filled === 0}
-                      className="mt-3 w-full rounded-xl bg-[#0f2a3a] py-2 text-sm font-semibold text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-30"
+                      className="mt-2 w-full rounded-xl bg-[#0f2a3a] py-2 text-sm font-semibold text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-30"
                     >
                       Finish game
                     </button>
@@ -616,6 +729,9 @@ export default function AdminSessionPage() {
               {selected && !groupMode && (
                 <p className="mb-2 px-1 text-xs text-slate-500">Tap an open court slot to place this player.</p>
               )}
+              {selectedGroup && (
+                <p className="mb-2 px-1 text-xs text-slate-500">Tap "Place group here" on a court with enough room.</p>
+              )}
               {queue.length === 0 ? (
                 <p className="px-1 py-2 text-sm text-slate-400">Nobody waiting.</p>
               ) : (
@@ -672,7 +788,10 @@ export default function AdminSessionPage() {
                             />
                           ) : (
                             <span
-                              onClick={() => setSelected(selected === p.id ? null : p.id)}
+                              onClick={() => {
+                                setSelectedGroup(null)
+                                setSelected(selected === p.id ? null : p.id)
+                              }}
                               className={`flex h-5 w-5 flex-none cursor-pointer items-center justify-center rounded-full text-[10px] ${
                                 selected === p.id ? 'bg-[#0f2a3a] text-white' : 'bg-slate-100 text-slate-500'
                               }`}
@@ -681,7 +800,11 @@ export default function AdminSessionPage() {
                             </span>
                           )}
                           <span
-                            onClick={() => !groupMode && setSelected(selected === p.id ? null : p.id)}
+                            onClick={() => {
+                              if (groupMode) return
+                              setSelectedGroup(null)
+                              setSelected(selected === p.id ? null : p.id)
+                            }}
                             className={`flex-1 truncate ${groupMode ? '' : 'cursor-pointer'}`}
                           >
                             {p.name}
@@ -710,22 +833,37 @@ export default function AdminSessionPage() {
                     }
 
                     // Grouped cluster
+                    const isSelectedGroup = selectedGroup === row.groupId
                     return (
                       <li
                         key={row.groupId}
-                        className="rounded-lg border border-[#2f6f8f]/30 bg-[#2f6f8f]/5 p-2"
+                        className={`rounded-lg border p-2 ${
+                          isSelectedGroup
+                            ? 'border-[#d9f24a] bg-[#d9f24a]/10'
+                            : 'border-[#2f6f8f]/30 bg-[#2f6f8f]/5'
+                        }`}
                       >
                         <div className="mb-1 flex items-center justify-between px-1">
                           <span className="text-[10px] font-semibold uppercase tracking-wide text-[#2f6f8f]">
                             Group · {row.pos === row.endPos ? `#${row.pos}` : `#${row.pos}–${row.endPos}`}
                           </span>
                           {!groupMode && (
-                            <button
-                              onClick={() => dissolveGroup(row.groupId)}
-                              className="text-[10px] font-medium text-slate-400 hover:text-red-600"
-                            >
-                              Ungroup
-                            </button>
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => toggleSelectGroup(row.groupId)}
+                                className={`text-[10px] font-semibold ${
+                                  isSelectedGroup ? 'text-[#0f2a3a]' : 'text-[#2f6f8f] hover:text-[#0f2a3a]'
+                                }`}
+                              >
+                                {isSelectedGroup ? 'Selected ✓' : 'Select group'}
+                              </button>
+                              <button
+                                onClick={() => dissolveGroup(row.groupId)}
+                                className="text-[10px] font-medium text-slate-400 hover:text-red-600"
+                              >
+                                Ungroup
+                              </button>
+                            </div>
                           )}
                         </div>
                         <div className="space-y-1">
@@ -766,7 +904,11 @@ export default function AdminSessionPage() {
                                 className="group flex items-center gap-2 rounded-md bg-white px-2 py-1.5 text-sm"
                               >
                                 <span
-                                  onClick={() => setSelected(selected === p.id ? null : p.id)}
+                                  onClick={() => {
+                                    if (groupMode) return
+                                    setSelectedGroup(null)
+                                    setSelected(selected === p.id ? null : p.id)
+                                  }}
                                   className={`flex-1 truncate ${!groupMode ? 'cursor-pointer' : ''} ${
                                     selected === p.id ? 'font-semibold text-[#0f2a3a]' : ''
                                   }`}
