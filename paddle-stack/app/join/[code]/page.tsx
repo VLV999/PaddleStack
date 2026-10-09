@@ -24,6 +24,11 @@ type Player = {
   slot: number | null
 }
 
+const skillDotClass = (s: string) =>
+  s === 'beginner' ? 'bg-slate-300' : s === 'advanced' ? 'bg-[#d9f24a]' : 'bg-sky-400'
+const skillLabel = (s: string) =>
+  s === 'beginner' ? 'Beginner' : s === 'advanced' ? 'Advanced' : 'Intermediate'
+
 export default function JoinPage() {
   const { code } = useParams<{ code: string }>()
   const [userId, setUserId] = useState<string | null>(null)
@@ -200,16 +205,41 @@ export default function JoinPage() {
       )}
 
       <section className="mt-6 px-5">
-        <h2 className="mb-2 font-semibold text-[#0f172a]">Courts</h2>
+        <div className="mb-2 flex items-center justify-between">
+          <h2 className="font-semibold text-[#0f172a]">Courts</h2>
+          <div className="flex items-center gap-2.5 text-[11px] text-slate-500">
+            <span className="flex items-center gap-1">
+              <span className="h-2 w-2 rounded-full bg-slate-300" /> Beg
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="h-2 w-2 rounded-full bg-sky-400" /> Int
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="h-2 w-2 rounded-full bg-[#d9f24a]" /> Adv
+            </span>
+          </div>
+        </div>
         <ul className="space-y-2">
           {Array.from({ length: session.court_count }, (_, c) => {
             const onCourt = players.filter((p) => p.status === 'playing' && p.court === c)
             return (
               <li key={c} className="rounded-xl border border-slate-200 bg-white p-3">
                 <div className="mb-1 text-sm font-medium text-slate-500">Court {c + 1}</div>
-                <p className={onCourt.length ? 'text-[#0f172a]' : 'text-slate-400'}>
-                  {onCourt.length ? onCourt.map((p) => p.name).join(', ') : 'Open'}
-                </p>
+                {onCourt.length === 0 ? (
+                  <p className="text-slate-400">Open</p>
+                ) : (
+                  <div className="flex flex-wrap gap-x-3 gap-y-1">
+                    {onCourt.map((p) => (
+                      <span key={p.id} className="flex items-center gap-1.5 text-[#0f172a]">
+                        <span
+                          title={skillLabel(p.skill)}
+                          className={`h-2.5 w-2.5 flex-none rounded-full ring-1 ring-slate-300 ${skillDotClass(p.skill)}`}
+                        />
+                        {p.name}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </li>
             )
           })}
