@@ -1,6 +1,8 @@
+'use client'
+
+import { useState } from 'react'
 import Link from 'next/link'
 import Header from '@/components/Header'
-
 
 export default function Home() {
   return (
@@ -52,7 +54,70 @@ export default function Home() {
         />
       </section>
 
-      <footer className="mx-auto max-w-5xl px-6 py-10 text-sm text-slate-400">Paddle Stack</footer>
+      <section id="faq" className="mx-auto max-w-5xl px-6 py-16">
+        <h2 className="text-2xl font-extrabold tracking-tight text-[#0f172a]">Frequently asked questions</h2>
+        <div className="mt-6 divide-y divide-slate-200 border-y border-slate-200">
+          <FaqItem
+            q="Do players need to download anything or create an account?"
+            a="No. Players just open a link, type their name, and pick a skill level. No app, no account."
+          />
+          <FaqItem
+            q="Does the organizer need an account?"
+            a="Yes, so you can always get back to your sessions from any device. You can sign up with Google or email."
+          />
+          <FaqItem
+            q="Is it free to use?"
+            a="Yes, Paddle Stack is free during the beta."
+          />
+          <FaqItem
+            q="Can players be grouped as partners?"
+            a="Yes. The organizer can link 2 or 4 players as a group, and they'll move through the queue and onto a court together."
+          />
+          <FaqItem
+            q="What happens if I close the tab while I'm waiting in the queue?"
+            a="Your spot is saved on that device as long as you don't clear your browser data. Reopening the same link brings you back to your place in line."
+          />
+        </div>
+      </section>
+
+      <footer className="border-t border-slate-200 bg-[#0f2a3a] text-white/70">
+        <div className="mx-auto max-w-5xl px-6 py-12">
+          <div className="grid grid-cols-2 gap-8 sm:grid-cols-4">
+            <div className="col-span-2 sm:col-span-1">
+              <p className="text-lg font-extrabold tracking-tight text-white">Paddle Stack</p>
+              <p className="mt-2 text-sm">Run open play without the clipboard.</p>
+            </div>
+
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-white/40">Support</p>
+              <ul className="mt-3 space-y-2 text-sm">
+                <li><a href="#faq" className="hover:text-white">FAQ</a></li>
+                <li><a href="mailto:support@paddlestack.app" className="hover:text-white">Contact us</a></li>
+                <li><a href="mailto:support@paddlestack.app?subject=Feedback" className="hover:text-white">Send feedback</a></li>
+              </ul>
+            </div>
+
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-white/40">Product</p>
+              <ul className="mt-3 space-y-2 text-sm">
+                <li><Link href="/admin" className="hover:text-white">Start a session</Link></li>
+              </ul>
+            </div>
+
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-white/40">Legal</p>
+              <ul className="mt-3 space-y-2 text-sm">
+                <li><Link href="/privacy" className="hover:text-white">Privacy</Link></li>
+                <li><Link href="/terms" className="hover:text-white">Terms</Link></li>
+              </ul>
+            </div>
+          </div>
+
+          <div className="mt-10 border-t border-white/10 pt-6 text-xs text-white/40">
+            © {new Date().getFullYear()} Paddle Stack
+          </div>
+        </div>
+      </footer>
     </main>
   )
 }
@@ -97,5 +162,21 @@ function JoinForm() {
         Join
       </button>
     </form>
+  )
+}
+
+function FaqItem({ q, a }: { q: string; a: string }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="py-4">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between text-left"
+      >
+        <span className="font-medium text-[#0f172a]">{q}</span>
+        <span className={`text-slate-400 transition-transform ${open ? 'rotate-45' : ''}`}>+</span>
+      </button>
+      {open && <p className="mt-2 text-sm text-slate-600">{a}</p>}
+    </div>
   )
 }
