@@ -30,14 +30,6 @@ export default function AdminPage() {
   const [error, setError] = useState<string | null>(null)
   const [showNewForm, setShowNewForm] = useState(false)
 
-  // Email/password auth form state
-  const [mode, setMode] = useState<'signin' | 'signup'>('signin')
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
-  const [authBusy, setAuthBusy] = useState(false)
-  const [authError, setAuthError] = useState<string | null>(null)
-  const [authMessage, setAuthMessage] = useState<string | null>(null)
-
   useEffect(() => {
     let cancelled = false
 
@@ -76,28 +68,6 @@ export default function AdminPage() {
     })
   }
 
-  async function submitEmailAuth(e: React.FormEvent) {
-    e.preventDefault()
-    setAuthBusy(true)
-    setAuthError(null)
-    setAuthMessage(null)
-
-    if (mode === 'signup') {
-      const { data, error } = await supabase.auth.signUp({ email, password })
-      if (error) {
-        setAuthError(error.message)
-      } else if (!data.session) {
-        setAuthMessage('Check your email to confirm your account, then sign in.')
-        setTimeout(() => setAuthMessage(null), 6000)
-      }
-    } else {
-      const { error } = await supabase.auth.signInWithPassword({ email, password })
-      if (error) setAuthError(error.message)
-    }
-
-    setAuthBusy(false)
-  }
-
   async function signOut() {
     await supabase.auth.signOut()
     setSessions([])
@@ -132,12 +102,11 @@ export default function AdminPage() {
     return (
       <main className="min-h-dvh bg-[#f8fafc]">
         <Header backHref="/" backLabel="Home" right={null} />
-        <div className="mx-auto max-w-sm px-6 py-20">
-          <h1 className="text-center text-2xl font-extrabold tracking-tight text-[#0f172a]">Organizer sign-in</h1>
-          <p className="mt-2 text-center text-sm text-slate-500">
+        <div className="mx-auto flex max-w-sm flex-col items-center px-6 py-24 text-center">
+          <h1 className="text-2xl font-extrabold tracking-tight text-[#0f172a]">Organizer sign-in</h1>
+          <p className="mt-2 text-sm text-slate-500">
             Sign in to create sessions and always be able to get back to them.
           </p>
-
           <button
             onClick={signInWithGoogle}
             className="mt-6 flex w-full items-center justify-center gap-3 rounded-xl border border-slate-300 bg-white px-5 py-3 font-semibold text-[#0f172a] hover:bg-slate-50"
@@ -150,70 +119,7 @@ export default function AdminPage() {
             </svg>
             Sign in with Google
           </button>
-
-          <div className="my-6 flex items-center gap-3">
-            <div className="h-px flex-1 bg-slate-200" />
-            <span className="text-xs text-slate-400">or</span>
-            <div className="h-px flex-1 bg-slate-200" />
-          </div>
-
-          <div className="mb-4 flex rounded-lg bg-slate-100 p-1 text-sm font-medium">
-            <button
-              type="button"
-              onClick={() => { setMode('signin'); setAuthError(null); setAuthMessage(null) }}
-              className={`flex-1 rounded-md py-1.5 ${mode === 'signin' ? 'bg-white text-[#0f172a] shadow-sm' : 'text-slate-500'}`}
-            >
-              Sign in
-            </button>
-            <button
-              type="button"
-              onClick={() => { setMode('signup'); setAuthError(null); setAuthMessage(null) }}
-              className={`flex-1 rounded-md py-1.5 ${mode === 'signup' ? 'bg-white text-[#0f172a] shadow-sm' : 'text-slate-500'}`}
-            >
-              Sign up
-            </button>
-          </div>
-
-          <form onSubmit={submitEmailAuth} className="space-y-3">
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="Email"
-              required
-              className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-[#2f6f8f] focus:ring-2 focus:ring-[#2f6f8f]/30"
-            />
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Password"
-              required
-              minLength={6}
-              className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-[#2f6f8f] focus:ring-2 focus:ring-[#2f6f8f]/30"
-            />
-            <button
-              disabled={authBusy}
-              type="submit"
-              className="w-full rounded-xl bg-[#0f2a3a] py-3 font-semibold text-white disabled:opacity-60"
-            >
-              {authBusy ? 'Please wait…' : mode === 'signup' ? 'Create account' : 'Sign in'}
-            </button>
-          </form>
-
-          {authError && <p className="mt-3 text-sm text-red-600">{authError}</p>}
         </div>
-
-        {authMessage && (
-          <div className="pointer-events-none fixed inset-x-0 top-6 z-50 flex justify-center px-4">
-            <div className="pointer-events-auto flex items-center gap-3 rounded-xl bg-[#0f2a3a] px-4 py-3 text-sm font-medium text-white shadow-lg">
-              <span className="flex h-6 w-6 flex-none items-center justify-center rounded-full bg-[#d9f24a] text-xs font-bold text-[#0f2a3a]">
-                ✓
-              </span>
-              {authMessage}
-            </div>
-          </div>
-        )}
       </main>
     )
   }

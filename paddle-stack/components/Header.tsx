@@ -111,7 +111,19 @@ export default function Header({ backHref, backLabel = 'Back', right }: HeaderPr
               <span aria-hidden>←</span> {backLabel}
             </Link>
           )}
-          <Link href="/" className="text-lg font-extrabold tracking-tight text-[#0f172a]">
+          <Link href="/" className="flex items-center gap-2 text-lg font-extrabold tracking-tight text-[#0f172a]">
+            <svg width="28" height="28" viewBox="0 0 32 32" className="flex-none">
+              <rect width="32" height="32" rx="8" fill="#0f2a3a" />
+              <circle cx="18" cy="10" r="7" fill="#d9f24a" stroke="#0f2a3a" strokeWidth="0.75" />
+              <rect x="9" y="4" width="6" height="16" rx="3" fill="#e8f2f7" />
+              <rect x="10.5" y="19" width="3" height="8" rx="1" fill="#2f6f8f" />
+              <rect x="10" y="26" width="4" height="2.5" rx="1.25" fill="#2f6f8f" />
+              <circle cx="19" cy="6.5" r="0.75" fill="#0f2a3a" opacity="0.65" />
+              <circle cx="22.5" cy="8" r="0.75" fill="#0f2a3a" opacity="0.65" />
+              <circle cx="23.5" cy="11.5" r="0.75" fill="#0f2a3a" opacity="0.65" />
+              <circle cx="20.5" cy="13.5" r="0.75" fill="#0f2a3a" opacity="0.65" />
+              <circle cx="17.5" cy="11" r="0.75" fill="#0f2a3a" opacity="0.65" />
+            </svg>
             Paddle Stack
           </Link>
         </div>
