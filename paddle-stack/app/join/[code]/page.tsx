@@ -111,16 +111,33 @@ export default function JoinPage() {
     setBusy(true)
     setError(null)
 
-    const { error: insertError } = await supabase.from('players').insert({
-      session_id: session.id,
-      user_id: userId,
-      name: name.trim(),
-      skill,
-    })
+    // Make sure the auth session is actually confirmed before writing —
+    // on a slow connection, userId can be set locally just before the
+    // real session finishes attaching, which trips row-level security.
+    await supabase.auth.getSession()
+
+    async function attemptInsert() {
+      return supabase.from('players').insert({
+        session_id: session!.id,
+        user_id: userId,
+        name: name.trim(),
+        skill,
+      })
+    }
+
+    let { error: insertError } = await attemptInsert()
+
+    // One retry, in case the first attempt still raced ahead of auth.
+    if (insertError && insertError.message.includes('row-level security')) {
+      await new Promise((r) => setTimeout(r, 500))
+      ;({ error: insertError } = await attemptInsert())
+    }
 
     if (insertError) {
       if (insertError.code === '23505') {
         setError(`"${name.trim()}" is already taken in this session. Try adding a last initial.`)
+      } else if (insertError.message.includes('row-level security')) {
+        setError('Connection hiccup — please try again.')
       } else {
         setError(insertError.message)
       }

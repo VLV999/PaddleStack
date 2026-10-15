@@ -23,12 +23,14 @@ type SessionRow = {
 export default function AdminPage() {
   const router = useRouter()
   const [userId, setUserId] = useState<string | null | undefined>(undefined) // undefined = loading
+  const [isGuest, setIsGuest] = useState(false)
   const [sessions, setSessions] = useState<SessionRow[]>([])
   const [name, setName] = useState('')
   const [courts, setCourts] = useState(4)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showNewForm, setShowNewForm] = useState(false)
+  const [showGuestWarning, setShowGuestWarning] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -38,6 +40,7 @@ export default function AdminPage() {
       const uid = cur.session?.user.id ?? null
       if (cancelled) return
       setUserId(uid)
+      setIsGuest(cur.session?.user.is_anonymous ?? false)
 
       if (uid) {
         const { data } = await supabase
@@ -53,6 +56,7 @@ export default function AdminPage() {
 
     const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
       setUserId(session?.user.id ?? null)
+      setIsGuest(session?.user.is_anonymous ?? false)
     })
 
     return () => {
@@ -66,6 +70,11 @@ export default function AdminPage() {
       provider: 'google',
       options: { redirectTo: `${window.location.origin}/auth/callback` },
     })
+  }
+
+  async function continueAsGuest() {
+    setShowGuestWarning(false)
+    await supabase.auth.signInAnonymously()
   }
 
   async function signOut() {
@@ -94,6 +103,16 @@ export default function AdminPage() {
     router.push(`/admin/${session.id}`)
   }
 
+  async function deleteSession(sessionId: string, sessionName: string) {
+    if (!confirm(`Delete "${sessionName}"? This removes it and all its players and match history permanently.`)) return
+    const { error } = await supabase.from('sessions').delete().eq('id', sessionId)
+    if (error) {
+      alert(error.message)
+      return
+    }
+    setSessions((prev) => prev.filter((s) => s.id !== sessionId))
+  }
+
   if (userId === undefined) {
     return <main className="grid min-h-dvh place-items-center bg-[#f8fafc] text-slate-500">Loading…</main>
   }
@@ -119,7 +138,44 @@ export default function AdminPage() {
             </svg>
             Sign in with Google
           </button>
+
+          <button
+            onClick={() => setShowGuestWarning(true)}
+            className="mt-3 text-sm font-medium text-slate-400 underline-offset-4 hover:text-slate-600 hover:underline"
+          >
+            Continue as guest
+          </button>
         </div>
+
+        {showGuestWarning && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-6">
+            <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
+              <h2 className="text-lg font-bold text-[#0f172a]">Continuing as a guest</h2>
+              <p className="mt-2 text-sm text-slate-600">
+                Guest sessions aren&apos;t saved to an account. If you close this tab or clear your browser data,
+                any sessions you create will no longer be accessible — to you or your players. There&apos;s no way
+                to recover them afterward.
+              </p>
+              <p className="mt-2 text-sm text-slate-600">
+                If you want to be able to get back to your sessions later, sign in with Google instead.
+              </p>
+              <div className="mt-5 flex gap-2">
+                <button
+                  onClick={() => setShowGuestWarning(false)}
+                  className="flex-1 rounded-xl border border-slate-300 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={continueAsGuest}
+                  className="flex-1 rounded-xl bg-[#0f2a3a] py-2.5 text-sm font-semibold text-white hover:bg-[#0c2230]"
+                >
+                  Continue as guest
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
     )
   }
@@ -133,6 +189,13 @@ export default function AdminPage() {
       } />
 
       <div className="mx-auto max-w-xl px-6 py-12">
+        {isGuest && (
+          <div className="mb-6 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-800 ring-1 ring-amber-200">
+            You&apos;re signed in as a guest. Sessions you create here won&apos;t be saved once you leave — sign in
+            with Google if you want to keep access to them.
+          </div>
+        )}
+
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-extrabold tracking-tight text-[#0f172a]">Your sessions</h1>
           <button
@@ -173,19 +236,28 @@ export default function AdminPage() {
             <p className="text-sm text-slate-400">No sessions yet — create your first one above.</p>
           )}
           {sessions.map((s) => (
-            <button
+            <div
               key={s.id}
-              onClick={() => router.push(`/admin/${s.id}`)}
-              className="flex w-full items-center justify-between rounded-xl border border-slate-200 bg-white px-4 py-3 text-left hover:border-[#2f6f8f]"
+              className="group flex items-center justify-between rounded-xl border border-slate-200 bg-white px-4 py-3 hover:border-[#2f6f8f]"
             >
-              <div>
+              <button onClick={() => router.push(`/admin/${s.id}`)} className="flex-1 text-left">
                 <p className="font-semibold text-[#0f172a]">{s.name}</p>
                 <p className="text-xs text-slate-400">{s.code}</p>
+              </button>
+              <div className="flex items-center gap-2">
+                <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${s.is_open ? 'bg-[#d9f24a] text-[#0f2a3a]' : 'bg-slate-100 text-slate-400'}`}>
+                  {s.is_open ? 'Open' : 'Closed'}
+                </span>
+                <button
+                  onClick={() => deleteSession(s.id, s.name)}
+                  className="text-slate-300 opacity-0 hover:text-red-600 group-hover:opacity-100"
+                  aria-label={`Delete ${s.name}`}
+                  title="Delete session"
+                >
+                  ✕
+                </button>
               </div>
-              <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${s.is_open ? 'bg-[#d9f24a] text-[#0f2a3a]' : 'bg-slate-100 text-slate-400'}`}>
-                {s.is_open ? 'Open' : 'Closed'}
-              </span>
-            </button>
+            </div>
           ))}
         </div>
       </div>
