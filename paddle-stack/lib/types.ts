@@ -15,6 +15,7 @@ export type Player = {
   court: number | null
   slot: number | null
   group_id: string | null
+  skipped_rounds: number
 }
 
 export type QueueItem =

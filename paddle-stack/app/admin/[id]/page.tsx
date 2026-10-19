@@ -44,7 +44,7 @@ export default function AdminSessionPage() {
       async function loadPlayers() {
         const { data } = await supabase
           .from('players')
-          .select('id, name, skill, status, queued_at, court, slot, group_id')
+          .select('id, name, skill, status, queued_at, court, slot, group_id, skipped_rounds')
           .eq('session_id', id)
           .order('queued_at', { ascending: true })
         if (!cancelled) setPlayers(data ?? [])
@@ -87,7 +87,7 @@ export default function AdminSessionPage() {
         .eq('id', occupant.id)
     }
 
-    await supabase.from('players').update({ status: 'playing', court, slot }).eq('id', playerId)
+    await supabase.from('players').update({ status: 'playing', court, slot, skipped_rounds: 0 }).eq('id', playerId)
     setSelected(null)
   }
 
@@ -105,7 +105,7 @@ export default function AdminSessionPage() {
 
     await Promise.all(
       members.map((p, i) =>
-        supabase.from('players').update({ status: 'playing', court, slot: openSlots[i] }).eq('id', p.id)
+        supabase.from('players').update({ status: 'playing', court, slot: openSlots[i], skipped_rounds: 0 }).eq('id', p.id)
       )
     )
     setSelectedGroup(null)
@@ -270,14 +270,24 @@ export default function AdminSessionPage() {
     const { data: matchRows } = await supabase.from('matches').select('player_ids, winner_side').eq('session_id', id)
 
     const assignments = computeAutoAssignments(players, session.court_count, matchRows ?? [])
+    const assignedIds = new Set(assignments.flatMap((a) => a.group.map((p) => p.id)))
 
     for (const { court, group } of assignments) {
       await Promise.all(
         group.map((p, slot) =>
-          supabase.from('players').update({ status: 'playing', court, slot }).eq('id', p.id)
+          supabase.from('players').update({ status: 'playing', court, slot, skipped_rounds: 0 }).eq('id', p.id)
         )
       )
     }
+
+    // Anyone still waiting after this pass has been passed over again —
+    // track it so they're prioritized harder next time.
+    const stillWaiting = players.filter((p) => p.status === 'queued' && !assignedIds.has(p.id))
+    await Promise.all(
+      stillWaiting.map((p) =>
+        supabase.from('players').update({ skipped_rounds: p.skipped_rounds + 1 }).eq('id', p.id)
+      )
+    )
   }
 
   if (loading) return <main className="grid min-h-dvh place-items-center bg-[#f8fafc] text-slate-500">Loading…</main>

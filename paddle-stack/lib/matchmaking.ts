@@ -46,9 +46,9 @@ export type MatchRow = { player_ids: string[]; winner_side: 'a' | 'b' | null }
 
 const MIN_GAMES_FOR_WIN_RATE = 2
 const MAX_WIN_RATE_ADJUSTMENT = 0.6
+const SKIPPED_ROUND_WEIGHT = 8 // base weight — grows with the square of consecutive skips
 
-// player_ids is stored in slot order [0,1,2,3]: indices 0-1 are side A, 2-3 are side B.
-export function computeWinStats(matchRows: MatchRow[]): Map<string, { wins: number; games: number }> {
+function computeWinStats(matchRows: MatchRow[]): Map<string, { wins: number; games: number }> {
   const stats = new Map<string, { wins: number; games: number }>()
   for (const m of matchRows) {
     m.player_ids.forEach((playerId, i) => {
@@ -61,6 +61,7 @@ export function computeWinStats(matchRows: MatchRow[]): Map<string, { wins: numb
   }
   return stats
 }
+export { computeWinStats }
 
 function effectiveSkillValue(p: Player, winStats: Map<string, { wins: number; games: number }>) {
   const base = skillValue(p.skill)
@@ -105,7 +106,8 @@ export function computeAutoAssignments(
     const skills = flat.map((p) => effectiveSkillValue(p, winStats))
     const spread = Math.max(...skills) - Math.min(...skills)
     const waitPenalty = unitIndices.reduce((a, b) => a + b, 0)
-    return repeatCount(flat) * 1000 + spread * 10 + waitPenalty * 0.1
+    const fairnessBonus = flat.reduce((sum, p) => sum + p.skipped_rounds ** 2, 0) * SKIPPED_ROUND_WEIGHT
+    return repeatCount(flat) * 1000 + spread * 10 + waitPenalty * 0.1 - fairnessBonus
   }
 
   function subsetsSummingToFour(pool: Unit[]): { combo: Unit[]; indices: number[] }[] {
@@ -175,9 +177,6 @@ export function computeAutoAssignments(
     const pool = units.slice(0, WINDOW_UNITS)
     const allCandidates = subsetsSummingToFour(pool)
 
-    // The person (or group) at the front of the queue must always be
-    // included — we only choose skill-balanced partners around them,
-    // never skip past them for a tighter skill match elsewhere.
     const candidates = allCandidates.filter((cand) => cand.indices.includes(0))
     if (candidates.length === 0) continue
 
