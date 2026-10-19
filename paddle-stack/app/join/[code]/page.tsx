@@ -209,9 +209,14 @@ export default function JoinPage() {
         <section className="mx-5 rounded-2xl bg-[#0f2a3a] p-6 text-white">
           <p className="text-sm text-white/70">{me.name}</p>
           {me.status === 'queued' && (
-            <p className="text-2xl font-bold">
-              You're <span className="text-[#d9f24a]">#{position}</span> in the queue
-            </p>
+            <>
+              <p className="text-2xl font-bold">
+                You're <span className="text-[#d9f24a]">#{position}</span> in the queue
+              </p>
+              {position !== null && position <= 4 && (
+                <p className="mt-1 text-sm font-medium text-[#d9f24a]">You're up next — stay nearby!</p>
+              )}
+            </>
           )}
           {me.status === 'playing' && (
             <p className="text-2xl font-bold">
@@ -269,18 +274,34 @@ export default function JoinPage() {
           <p className="text-slate-400">Nobody waiting.</p>
         ) : (
           <ol className="space-y-1.5">
-            {queue.map((p, i) => (
-              <li
-                key={p.id}
-                className={`flex items-center gap-3 rounded-lg px-3 py-2 ${
-                  p.id === me?.id ? 'bg-[#d9f24a]/60 font-semibold' : 'bg-white'
-                }`}
-              >
-                <span className="w-5 text-sm text-slate-500">{i + 1}</span>
-                <span className="flex-1 truncate">{p.name}</span>
-                <span className="text-xs text-slate-400">{p.skill}</span>
-              </li>
-            ))}
+            {queue.map((p, i) => {
+              const isNext = i < 4
+              return (
+                <li key={p.id}>
+                  {i === 0 && (
+                    <p className="mb-1.5 px-1 text-xs font-semibold uppercase tracking-wide text-[#2f6f8f]">
+                      Up next
+                    </p>
+                  )}
+                  {i === 4 && (
+                    <div className="mb-1.5 mt-3 border-t border-slate-200 pt-3" />
+                  )}
+                  <div
+                    className={`flex items-center gap-3 rounded-lg px-3 py-2 ${
+                      p.id === me?.id
+                        ? 'bg-[#d9f24a]/60 font-semibold'
+                        : isNext
+                        ? 'bg-[#2f6f8f]/10 ring-1 ring-[#2f6f8f]/20'
+                        : 'bg-white'
+                    }`}
+                  >
+                    <span className="w-5 text-sm text-slate-500">{i + 1}</span>
+                    <span className="flex-1 truncate">{p.name}</span>
+                    <span className="text-xs text-slate-400">{p.skill}</span>
+                  </div>
+                </li>
+              )
+            })}
           </ol>
         )}
       </section>
